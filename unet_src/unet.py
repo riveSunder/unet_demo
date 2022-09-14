@@ -187,7 +187,7 @@ class UNet(pl.LightningModule):
 
         loss = F.binary_cross_entropy(\
                 predictions, targets, weight=weight)
-        loss += torch.abs(predictions - targets).mean()
+        loss += torch.abs((predictions - targets)**2).mean()
 
         accuracy = torchmetrics.functional.accuracy(\
                 predictions, targets.long())
@@ -229,12 +229,12 @@ class UNet(pl.LightningModule):
 
 if __name__ == "__main__":
 
-    max_epochs = 100
-    num_workers = 2
+    max_epochs = 1000
+    num_workers = 16
     batch_size = 32
     dropout_rate = 0.5
     l2 = 1e-4
-    lr=2e-3
+    lr= 3e-4
     dim_h = 1024
     my_seeds = [1, 13, 42] 
 
