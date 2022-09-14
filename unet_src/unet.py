@@ -10,6 +10,7 @@ import torchmetrics
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelPruning
 
+import matplotlib.pyplot as plt
 import skimage
 
 def intersection_over_union(prediction, target):
@@ -179,8 +180,15 @@ class UNet(pl.LightningModule):
 
         predictions = self.forward(data_x)
 
+        proportion = torch.sum(targets == 0.0) \
+                / (torch.sum(targets == 1.0) + 1.)
+
+        weight = proportion * targets
+
         loss = F.binary_cross_entropy(\
-                predictions, targets)
+                predictions, targets, weight=weight)
+        loss += torch.abs(predictions - targets).mean()
+
         accuracy = torchmetrics.functional.accuracy(\
                 predictions, targets.long())
         iou = intersection_over_union(\
@@ -221,56 +229,87 @@ class UNet(pl.LightningModule):
 
 if __name__ == "__main__":
 
-    max_epochs = 20
+    max_epochs = 100
     num_workers = 2
-    batch_size = 16
+    batch_size = 32
     dropout_rate = 0.5
-    l2 = 1e-6
-    lr=3e-4
+    l2 = 1e-4
+    lr=2e-3
     dim_h = 1024
     my_seeds = [1, 13, 42] 
 
-    data_x = torch.rand(1024, 1, 256, 256)
-    target = np.random.randint(0,2,(1024,1,128,128))
+    data_x = np.load("./data/epfl_x.npy")
+    target = np.load("./data/epfl_y.npy")
 
-    target = skimage.transform.resize(target, (1024,1,256,256))
-    target[target > 0] = 1.0
+    data_x = torch.tensor(data_x / 255.).float()
+    target = torch.tensor(target / 255.).float()
 
     target = torch.tensor(target, dtype=torch.float32)
 
+    for my_seed in [1, 2, 3]:
+        for use_skips in [0,1]:
+            try:
+                model = UNet(use_skips=use_skips)
 
-    my_seed = 13
+                np.random.seed(my_seed)
+                torch.manual_seed(my_seed)
 
-    for use_skips in [0,1]:
-        model = UNet(use_skips=use_skips)
+                dataset = TensorDataset(data_x[:900], target[:900]) 
+                val_dataset = TensorDataset(\
+                        data_x[-90:], target[-90:]) 
+                train_dataloader = DataLoader(dataset, \
+                        batch_size=batch_size, \
+                        num_workers=num_workers)
+                val_dataloader = DataLoader(val_dataset, \
+                        batch_size=batch_size, \
+                        num_workers=num_workers)
 
-        np.random.seed(my_seed)
-        torch.manual_seed(my_seed)
+                if torch.cuda.is_available():
+                    trainer = pl.Trainer(accelerator="gpu", \
+                            devices=1, max_epochs=max_epochs)
+                else:
+                    trainer = pl.Trainer(max_epochs=max_epochs)
 
-        test_x, test_y = data_x[-100:], target[-100:]
-        dataset = TensorDataset(data_x[:400], target[:400]) 
-        val_dataset = TensorDataset(\
-                data_x[-400:-100], target[-400:-100]) 
-        train_dataloader = DataLoader(dataset, \
-                batch_size=batch_size, \
-                num_workers=num_workers)
-        val_dataloader = DataLoader(val_dataset, \
-                batch_size=batch_size, \
-                num_workers=num_workers)
+                if use_skips:
+                    print("training with skip connections enabled")
+                    predict_title = "U-Net segmentation"
+                else:
+                    print("training without skip connections")
+                    predict_title = "FCNN segmentation"
 
+                target_title = "ground truth segmentation"
+                input_title = "Input image"
 
-        if torch.cuda.is_available():
-            trainer = pl.Trainer(accelerator="gpu", \
-                    devices=1, max_epochs=max_epochs)
-        else:
-            trainer = pl.Trainer(max_epochs=max_epochs)
+                trainer.fit(model=model, \
+                        train_dataloaders=train_dataloader,\
+                        val_dataloaders=val_dataloader)
+            except KeyboardInterrupt:
+                pass
 
-        if use_skips:
-            print("training with skip connections enabled")
-        else:
-            print("training without skip connections")
+            for idx in [80, 40, 3]:
+                plt.figure(figsize=(8,8))
 
-        trainer.fit(model=model, \
-                train_dataloaders=train_dataloader,\
-                val_dataloaders=val_dataloader)
+                my_img = data_x[-idx].numpy().transpose(1,2,0)
+                my_labels = target[-idx].numpy().transpose(1,2,0)
+                predicted = model(data_x[-idx:-idx+1]).squeeze().detach()
+                predicted_img = predicted.numpy()
+                
+                plt.subplot(311)
+                plt.imshow(my_img, cmap="gray")
+                plt.title(input_title)
 
+                plt.subplot(312)
+                plt.imshow(predicted_img, cmap="magma")
+                plt.title(predict_title)
+
+                plt.subplot(313)
+                plt.imshow(my_labels, cmap="inferno")
+                plt.title(target_title)
+
+                save_fig_path = f"idx{idx}_skips{use_skips}_seed{my_seed}"
+
+                plt.tight_layout()
+
+                plt.savefig(save_fig_path)
+                plt.close()
+            torch.save(model.state_dict(), save_fig_path + "_model.pt")
