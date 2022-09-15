@@ -20,7 +20,7 @@ def intersection_over_union(prediction, target):
 
     intersection = prediction.round() * target
 
-    union = prediction.round() + target
+    union = 1.0 * ((prediction.round() + target) >= 1.0)
 
     iou = intersection.sum() / union.sum()
 
@@ -42,8 +42,8 @@ class UNet(pl.LightningModule):
         # padding
         self.p = 1
 
-        self.lr = 3e-4
-        self.l2_penalty = 1e-5
+        self.lr = kwargs["lr"]
+        self.l2_penalty = kwargs["l2"] 
 
         if "use_skips" in kwargs.keys():
             self.use_skips = kwargs["use_skips"]
@@ -231,15 +231,19 @@ if __name__ == "__main__":
 
     max_epochs = 1000
     num_workers = 16
-    batch_size = 32
-    dropout_rate = 0.5
-    l2 = 1e-4
-    lr= 3e-4
+    batch_size = 8
+    l2 = 1e-8
+    lr= 6e-4
     dim_h = 1024
     my_seeds = [1, 13, 42] 
 
     data_x = np.load("./data/epfl_x.npy")
     target = np.load("./data/epfl_y.npy")
+
+    np.random.seed(13)
+    np.random.shuffle(data_x)
+    np.random.seed(13)
+    np.random.shuffle(target)
 
     data_x = torch.tensor(data_x / 255.).float()
     target = torch.tensor(target / 255.).float()
@@ -247,9 +251,12 @@ if __name__ == "__main__":
     target = torch.tensor(target, dtype=torch.float32)
 
     for my_seed in [1, 2, 3]:
-        for use_skips in [0,1]:
+
+        for use_skips in [1,0]:
+            np.random.seed(my_seed)
+            torch.manual_seed(my_seed)
             try:
-                model = UNet(use_skips=use_skips)
+                model = UNet(use_skips=use_skips, lr=lr, l2=l2)
 
                 np.random.seed(my_seed)
                 torch.manual_seed(my_seed)
